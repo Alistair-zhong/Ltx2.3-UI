@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LTX 2.3 · A2V Lab</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">L</div>
+      <div><strong>LTX 2.3</strong><span>A2V LoRA Lab</span></div>
+    </div>
+    <div class="model-state"><i id="statusDot"></i><span id="modelStatus">服务连接中</span></div>
+    <div class="header-actions">
+      <select id="presetSelect" aria-label="配置预设"><option value="">配置预设</option></select>
+      <button class="ghost" id="savePreset">保存预设</button>
+      <button class="ghost danger" id="unloadModel">卸载模型</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="workspace">
+      <aside class="sidebar">
+        <nav>
+          <button class="nav-item active" data-tab="generate"><span>✦</span>生成</button>
+          <button class="nav-item" data-tab="model"><span>◫</span>模型</button>
+          <button class="nav-item" data-tab="queue"><span>≡</span>任务</button>
+        </nav>
+        <div class="sidebar-note">
+          <b>模型常驻</b>
+          <p>只改生成参数时会复用显存中的 Pipeline。模型区参数改变后，下一次任务会自动重载。</p>
+        </div>
+      </aside>
+
+      <div class="form-panel">
+        <form id="generationForm" novalidate>
+          <div class="tab-page active" id="tab-generate">
+            <div class="section-heading"><div><small>GENERATION</small><h1>音频驱动视频</h1></div><span class="chip">A2V · TWO STAGE</span></div>
+
+            <label class="field prompt-field"><span>提示词 <em>必填</em></span>
+              <textarea id="prompt" rows="6" placeholder="描述人物、动作、镜头、节奏与画面风格…" required></textarea>
+              <b id="promptCount">0</b>
+            </label>
+
+            <div class="field"><span>音频</span><div class="file-row">
+              <input id="audioPath" placeholder="服务器上的音频路径，或上传文件" required>
+              <button type="button" class="upload" data-upload-for="audioPath">上传</button>
+              <button type="button" class="secondary" id="probeAudio">读取时长</button>
+            </div><small id="audioMeta">读取音频后可自动计算有效帧数</small></div>
+
+            <div class="grid three">
+              <label class="field"><span>起始时间 <i>秒</i></span><input id="audioStart" type="number" min="0" step="0.1" value="0"></label>
+              <label class="field"><span>最大时长 <i>秒</i></span><input id="audioDuration" type="number" min="0.1" step="0.1" value="16"></label>
+              <label class="field"><span>帧率 <i>FPS</i></span><input id="fps" type="number" min="1" max="120" step="1" value="25"></label>
+            </div>
+
+            <div class="frame-card">
+              <div><small>自动帧数</small><strong id="frameSummary">393 帧</strong><span id="durationSummary">15.72 秒 · 满足 8k+1</span></div>
+              <label class="toggle"><input id="autoFrames" type="checkbox" checked><span></span>跟随音频</label>
+              <label class="compact"><span>帧数</span><input id="numFrames" type="number" min="1" step="8" value="393"></label>
+            </div>
+
+            <div class="grid two">
+              <label class="field"><span>宽度 <i>px</i></span><input id="width" type="number" min="64" step="64" value="768"></label>
+              <label class="field"><span>高度 <i>px</i></span><input id="height" type="number" min="64" step="64" value="1280"></label>
+            </div>
+
+            <div class="subsection">
+              <div class="sub-head"><div><b>图片条件</b><small>支持首帧与多关键帧</small></div><button type="button" class="text-button" id="addImage">＋ 添加图片</button></div>
+              <div id="imageList"></div>
+            </div>
+
+            <details class="advanced">
+              <summary>高级生成参数 <span>引导、步数、负向提示词</span></summary>
+              <div class="details-body">
+                <div class="grid three">
+                  <label class="field"><span>采样步数</span><input id="steps" type="number" min="1" max="200" value="30"></label>
+                  <label class="field"><span>随机种子</span><input id="seed" type="number" min="0" value="10"></label>
+                  <label class="field"><span>最大批次</span><input id="maxBatch" type="number" min="1" max="4" value="1"></label>
+                  <label class="field"><span>CFG Scale</span><input id="cfg" type="number" min="0" step="0.1" value="3"></label>
+                  <label class="field"><span>STG Scale</span><input id="stg" type="number" min="0" step="0.1" value="1"></label>
+                  <label class="field"><span>A2V Scale</span><input id="a2v" type="number" min="0" step="0.1" value="3"></label>
+                  <label class="field"><span>Rescale</span><input id="rescale" type="number" min="0" max="1" step="0.05" value="0.7"></label>
+                  <label class="field"><span>Skip Step</span><input id="skipStep" type="number" min="0" value="0"></label>
+                  <label class="field"><span>STG Blocks</span><input id="stgBlocks" value="28" placeholder="28,29"></label>
+                </div>
+                <label class="field"><span>负向提示词</span><textarea id="negativePrompt" rows="4"></textarea></label>
+                <label class="check"><input id="enhancePrompt" type="checkbox">使用 Gemma 增强提示词</label>
+              </div>
+            </details>
+
+            <label class="field"><span>输出路径 <em>必填</em></span><input id="outputPath" value="/home/us5090/workspace/niro-workspace/LTX-2/test/test_out/a2v_output.mp4" required></label>
+          </div>
+
+          <div class="tab-page" id="tab-model">
+            <div class="section-heading"><div><small>MODEL SETUP</small><h1>模型与 LoRA</h1></div><span class="chip warm">改变后需重载</span></div>
+            <p class="intro">以下配置生成时只加载一次。连续测试 prompt、seed、音频或分辨率不会重载模型。</p>
+            <label class="field"><span>主模型 Checkpoint</span><input id="checkpoint" value="/home/us5090/workspace/niro-workspace/LTX-2/models/ltx-2.3-22b-dev.safetensors"></label>
+            <label class="field"><span>Gemma Root</span><input id="gemma" value="/home/us5090/workspace/niro-workspace/LTX-2/models/gemma-3-12b-it-qat-q4_0-unquantized"></label>
+            <label class="field"><span>空间上采样模型</span><input id="upsampler" value="/home/us5090/workspace/niro-workspace/LTX-2/models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"></label>
+            <div class="lora-row distilled"><label class="field"><span>Distilled LoRA</span><input id="distilledPath" value="/home/us5090/workspace/niro-workspace/LTX-2/models/ltx-2.3-22b-distilled-lora-1.1_rank72_energy.safetensors"></label><label class="field strength"><span>强度</span><input id="distilledStrength" type="number" step="0.05" value="0.5"></label></div>
+            <div class="subsection">
+              <div class="sub-head"><div><b>测试 LoRA</b><small>路径或强度改变都会使模型配置失效</small></div><button type="button" class="text-button" id="addLora">＋ 添加 LoRA</button></div>
+              <div id="loraList"></div>
+            </div>
+            <div class="grid three">
+              <label class="field"><span>量化</span><select id="quantization"><option value="fp8-cast">FP8 Cast</option><option value="none">不量化</option><option value="fp8-scaled-mm">FP8 Scaled MM</option></select></label>
+              <label class="field"><span>Offload</span><select id="offload"><option value="cpu">CPU</option><option value="none">关闭</option><option value="disk">磁盘</option></select></label>
+              <div class="info-tile"><span>当前配置</span><b id="reloadBadge">待加载</b></div>
+            </div>
+          </div>
+
+          <div class="tab-page" id="tab-queue">
+            <div class="section-heading"><div><small>JOBS</small><h1>任务队列</h1></div><button type="button" class="ghost" id="refreshJobs">刷新</button></div>
+            <div id="jobList" class="job-list"><div class="empty">还没有生成任务</div></div>
+          </div>
+        </form>
+      </div>
+
+      <aside class="run-panel">
+        <div class="preview-head"><div><small>OUTPUT PREVIEW</small><b>本次生成</b></div><span id="validationPill" class="pill neutral">等待校验</span></div>
+        <div class="preview" id="preview"><div class="preview-empty"><span>▶</span><p>生成完成后在这里预览</p></div></div>
+        <div class="specs">
+          <div><span>画幅</span><b id="specResolution">768 × 1280</b></div>
+          <div><span>时长</span><b id="specDuration">15.72s</b></div>
+          <div><span>帧</span><b id="specFrames">393 @ 25</b></div>
+          <div><span>Seed</span><b id="specSeed">10</b></div>
+        </div>
+        <div id="issues" class="issues"></div>
+        <div id="progressBox" class="progress-box hidden"><div><span id="progressMessage">等待执行</span><b id="progressValue">0%</b></div><div class="progress-track"><i id="progressBar"></i></div></div>
+        <button type="submit" form="generationForm" class="run-button" id="runButton"><span>✦</span><b>加入生成队列</b><small id="runHint">将加载新模型配置</small></button>
+        <button type="button" class="validate-button" id="validateButton">仅检查参数</button>
+        <p class="run-note">任务按顺序执行，页面关闭不会中断服务端生成。</p>
+      </aside>
+    </section>
+  </main>
+  <input type="file" id="hiddenUpload" hidden>
+  <div id="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
+
