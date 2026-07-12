@@ -251,6 +251,20 @@ class PipelineRuntime:
                 job.finished_at = now_iso()
 
     def _execute(self, job: Job) -> None:
+        # The official CLI decorates main() with @torch.inference_mode().  Keep the
+        # context active through video iterator consumption in _encode as decoding
+        # is lazy; wrapping only the pipeline call would exit too early.
+        import torch
+
+        with torch.inference_mode():
+            terminal_logger.info(
+                "PyTorch inference_mode=%s, grad_enabled=%s",
+                torch.is_inference_mode_enabled(),
+                torch.is_grad_enabled(),
+            )
+            self._execute_inference(job)
+
+    def _execute_inference(self, job: Job) -> None:
         request = job.request
         reload_required = self._active_key != request.model.cache_key() or self._pipeline is None
         terminal_logger.info("=" * 88)

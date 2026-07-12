@@ -8,7 +8,7 @@ def test_health_and_frame_calculator() -> None:
         response = client.get("/api/health")
         assert response.status_code == 200
         assert response.json()["ok"] is True
-        assert response.json()["version"] == "0.1.2"
+        assert response.json()["version"] == "0.1.3"
 
         response = client.post("/api/frames", json={"duration": 16, "fps": 25})
         assert response.status_code == 200
