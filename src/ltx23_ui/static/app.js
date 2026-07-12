@@ -7,7 +7,12 @@ function toast(message) {
   setTimeout(() => el.classList.remove('show'), 2600);
 }
 async function api(url, options = {}) {
-  const response = await fetch(url, { headers: options.body instanceof FormData ? {} : {'Content-Type':'application/json'}, ...options });
+  let response;
+  try {
+    response = await fetch(url, { headers: options.body instanceof FormData ? {} : {'Content-Type':'application/json'}, ...options });
+  } catch (error) {
+    throw new Error(`无法连接服务端 ${location.origin}${url}。请确认页面通过 ltx23-ui 的 7860 端口打开，且服务进程仍在运行。`);
+  }
   if (!response.ok) { let data; try { data = await response.json(); } catch { data = {}; } throw new Error(data.detail || `请求失败 ${response.status}`); }
   return response.json();
 }
@@ -81,10 +86,28 @@ function showProgress(job){$('progressBox').classList.remove('hidden');$('progre
 function startPolling(){clearInterval(state.poll);state.poll=setInterval(async()=>{if(!state.currentJob)return;try{const job=await api(`/api/jobs/${state.currentJob}`);showProgress(job);if(['completed','failed','cancelled'].includes(job.state)){clearInterval(state.poll);loadJobs();health();if(job.state==='completed'){$('preview').innerHTML=`<video controls autoplay src="/api/jobs/${job.id}/video?t=${Date.now()}"></video>`;toast('视频生成完成')}else toast(job.error?.split('\n')[0]||job.message)}}catch{}},1500)}
 async function loadJobs(){try{const jobs=await api('/api/jobs');$('jobList').innerHTML=jobs.length?jobs.map(job=>`<div class="job-card"><div class="top"><b>#${job.id}</b><span class="state">${job.state} · ${job.progress}%</span></div><p>${escapeHtml(job.prompt)}</p><small>${new Date(job.created_at).toLocaleString()} · Seed ${job.seed}</small><div class="job-actions">${job.state==='completed'?`<a href="/api/jobs/${job.id}/video" target="_blank">播放 / 下载</a>`:''}${job.state==='queued'?`<button onclick="cancelJob('${job.id}')">取消</button>`:''}</div></div>`).join(''):'<div class="empty">还没有生成任务</div>'}catch(e){toast(e.message)}}
 async function cancelJob(id){try{await api(`/api/jobs/${id}/cancel`,{method:'POST'});loadJobs()}catch(e){toast(e.message)}}window.cancelJob=cancelJob;
-async function health(){try{const data=await api('/api/health');$('statusDot').className='online';$('modelStatus').textContent=data.model_loaded?'模型已加载 · 可复用':'服务在线 · 模型未加载'}catch{$('statusDot').className='';$('modelStatus').textContent='服务离线'}}
+async function health(){try{const data=await api('/api/health');state.health=data;$('statusDot').className='online';$('modelStatus').textContent=data.model_loaded?'模型已加载 · 可复用':data.upload_ready?'服务在线 · 模型未加载':'服务在线 · 上传目录不可写'}catch{$('statusDot').className='';$('modelStatus').textContent='服务离线'}}
 async function loadDefaults(){try{const data=await api('/api/defaults');if(!$('negativePrompt').value)$('negativePrompt').value=data.negative_prompt}catch{}}
 function openUpload(input){state.uploadTarget=input;$('hiddenUpload').accept=input.id==='audioPath'?'audio/*':'image/*';$('hiddenUpload').click()}
-async function handleUpload(){const file=$('hiddenUpload').files[0];if(!file||!state.uploadTarget)return;const body=new FormData();body.append('file',file);try{toast('正在上传…');const data=await api('/api/upload',{method:'POST',body});state.uploadTarget.value=data.path;state.uploadTarget.dispatchEvent(new Event('input'));toast(`已上传 ${data.name}`)}catch(e){toast(e.message)}finally{$('hiddenUpload').value=''}}
+function uploadFile(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/upload');
+    request.responseType = 'json';
+    request.upload.onprogress = event => {
+      if (event.lengthComputable) onProgress(Math.round(event.loaded / event.total * 100));
+    };
+    request.onload = () => {
+      const data = request.response || {};
+      if (request.status >= 200 && request.status < 300) resolve(data);
+      else reject(new Error(data.detail || `上传失败：HTTP ${request.status}`));
+    };
+    request.onerror = () => reject(new Error(`上传连接被中断。请检查 ${location.origin}/api/health 是否能打开，并查看 ltx23-ui 终端日志。`));
+    request.onabort = () => reject(new Error('上传已取消'));
+    const body = new FormData(); body.append('file', file); request.send(body);
+  });
+}
+async function handleUpload(){const file=$('hiddenUpload').files[0];if(!file||!state.uploadTarget)return;try{if(state.health&&!state.health.upload_ready)throw new Error(`服务端上传目录不可写：${state.health.upload_dir}`);const max=state.health?.max_upload_bytes;if(max&&file.size>max)throw new Error(`文件过大，最大允许 ${Math.round(max/1024/1024)} MB`);toast(`正在上传 ${file.name}…`);const data=await uploadFile(file,percent=>toast(`正在上传 ${file.name} · ${percent}%`));state.uploadTarget.value=data.path;state.uploadTarget.dispatchEvent(new Event('input'));toast(`已上传 ${data.name}`)}catch(e){toast(e.message)}finally{$('hiddenUpload').value=''}}
 function savePreset(){const name=prompt('预设名称');if(!name)return;const presets=JSON.parse(localStorage.getItem('ltx-presets')||'{}');presets[name]=requestData();localStorage.setItem('ltx-presets',JSON.stringify(presets));refreshPresets();toast('预设已保存')}
 function refreshPresets(){const presets=JSON.parse(localStorage.getItem('ltx-presets')||'{}');$('presetSelect').innerHTML='<option value="">配置预设</option>'+Object.keys(presets).map(x=>`<option>${escapeHtml(x)}</option>`).join('')}
 function loadPreset(name){const p=JSON.parse(localStorage.getItem('ltx-presets')||'{}')[name];if(!p)return;const m=p.model,g=p.generation;const map={checkpoint:m.checkpoint_path,gemma:m.gemma_root,upsampler:m.spatial_upsampler_path,distilledPath:m.distilled_lora.path,distilledStrength:m.distilled_lora.strength,quantization:m.quantization,offload:m.offload,maxBatch:m.max_batch_size,prompt:g.prompt,negativePrompt:g.negative_prompt,audioPath:g.audio_path,audioStart:g.audio_start_time,audioDuration:g.audio_max_duration,height:g.height,width:g.width,numFrames:g.num_frames,fps:g.frame_rate,steps:g.num_inference_steps,seed:g.seed,outputPath:g.output_path,cfg:g.guidance.cfg_scale,stg:g.guidance.stg_scale,rescale:g.guidance.rescale_scale,a2v:g.guidance.a2v_scale,skipStep:g.guidance.skip_step,stgBlocks:g.guidance.stg_blocks.join(',')};Object.entries(map).forEach(([id,v])=>{if($(id))$(id).value=v??''});$('enhancePrompt').checked=g.enhance_prompt;$('loraList').innerHTML='';m.loras.forEach(addLora);$('imageList').innerHTML='';g.images.forEach(addImage);scheduleValidate();toast(`已加载预设 ${name}`)}

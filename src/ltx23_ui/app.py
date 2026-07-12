@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,6 +23,8 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = PACKAGE_DIR / "static"
 DATA_DIR = Path(os.environ.get("LTX_UI_DATA_DIR", "~/.ltx23-ui")).expanduser()
 UPLOAD_DIR = DATA_DIR / "uploads"
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+MAX_UPLOAD_BYTES = int(os.environ.get("LTX_UI_MAX_UPLOAD_MB", "2048")) * 1024 * 1024
 
 runtime = PipelineRuntime()
 
@@ -53,10 +54,14 @@ class ProbeRequest(BaseModel):
 
 @app.get("/api/health")
 def health() -> dict:
+    upload_ready = UPLOAD_DIR.is_dir() and os.access(UPLOAD_DIR, os.W_OK)
     return {
         "ok": True,
         "model_loaded": runtime.model_loaded,
         "queue_size": runtime.queue_size,
+        "upload_ready": upload_ready,
+        "upload_dir": str(UPLOAD_DIR),
+        "max_upload_bytes": MAX_UPLOAD_BYTES,
     }
 
 
@@ -148,16 +153,41 @@ def unload_model() -> dict:
 
 
 @app.post("/api/upload")
-def upload(file: UploadFile = File(...)) -> dict:
+async def upload(file: UploadFile = File(...)) -> dict:
+    try:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"无法创建上传目录 {UPLOAD_DIR}：{exc}") from exc
+    if not os.access(UPLOAD_DIR, os.W_OK):
+        raise HTTPException(status_code=500, detail=f"上传目录不可写：{UPLOAD_DIR}")
+
     safe_name = Path(file.filename or "upload.bin").name
     target = UPLOAD_DIR / safe_name
     counter = 1
     while target.exists():
         target = UPLOAD_DIR / f"{Path(safe_name).stem}-{counter}{Path(safe_name).suffix}"
         counter += 1
-    with target.open("wb") as output:
-        shutil.copyfileobj(file.file, output)
-    return {"path": str(target), "name": target.name, "size": target.stat().st_size}
+    written = 0
+    try:
+        with target.open("xb") as output:
+            while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件超过上传限制 {MAX_UPLOAD_BYTES // 1024 // 1024} MB",
+                    )
+                output.write(chunk)
+    except HTTPException:
+        target.unlink(missing_ok=True)
+        raise
+    except OSError as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"保存上传文件失败：{exc}") from exc
+    finally:
+        await file.close()
+
+    return {"path": str(target.resolve()), "name": target.name, "size": written}
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

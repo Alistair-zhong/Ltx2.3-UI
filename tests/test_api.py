@@ -20,3 +20,19 @@ def test_static_ui_is_served() -> None:
         assert response.status_code == 200
         assert "A2V LoRA Lab" in response.text
 
+
+def test_upload_saves_file(tmp_path, monkeypatch) -> None:
+    import ltx23_ui.app as app_module
+
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(app_module, "UPLOAD_DIR", upload_dir)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/upload",
+            files={"file": ("example image.jpg", b"fake-image-data", "image/jpeg")},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "example image.jpg"
+    assert body["size"] == len(b"fake-image-data")
+    assert (upload_dir / body["name"]).read_bytes() == b"fake-image-data"

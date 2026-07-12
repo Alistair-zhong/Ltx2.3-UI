@@ -53,6 +53,15 @@ ssh -L 7860:127.0.0.1:7860 user@server
 LTX_UI_DATA_DIR=/data/ltx-ui uv run ltx23-ui
 ```
 
+单个文件默认最大 2048 MB，可按需要调整：
+
+```bash
+LTX_UI_MAX_UPLOAD_MB=4096 uv run ltx23-ui
+```
+
+如果上传提示无法连接，请先直接访问 `http://服务器地址:7860/api/health`。返回 JSON
+说明后端正常；无法访问则需要检查 `ltx23-ui` 终端日志、SSH 端口转发或反向代理的上传大小限制。
+
 ## 模型复用规则
 
 以下字段不变时，下一次任务会直接复用当前 Pipeline：
@@ -84,4 +93,3 @@ uv run --extra dev ruff check .
 ```
 
 测试不会加载 LTX 模型或占用 GPU。
-
