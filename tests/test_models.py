@@ -22,6 +22,17 @@ def test_frames_snap_down_to_8k_plus_1() -> None:
 
 
 def test_generation_constraints() -> None:
+    with pytest.raises(ValidationError, match="路径不能为空"):
+        GenerationConfig(
+            prompt="test",
+            audio_path="  ",
+            output_path="out.mp4",
+            width=768,
+            height=1280,
+            num_frames=121,
+            frame_rate=25,
+        )
+
     with pytest.raises(ValidationError, match="8k\\+1"):
         GenerationConfig(
             prompt="test",

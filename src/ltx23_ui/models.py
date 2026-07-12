@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 DEFAULT_NEGATIVE_PROMPT = (
@@ -19,6 +19,14 @@ class LoraConfig(BaseModel):
     path: str
     strength: float = Field(default=1.0, ge=-4.0, le=4.0)
 
+    @field_validator("path")
+    @classmethod
+    def path_must_not_be_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("LoRA 路径不能为空")
+        return value
+
 
 class ModelConfig(BaseModel):
     checkpoint_path: str
@@ -29,6 +37,14 @@ class ModelConfig(BaseModel):
     quantization: Literal["none", "fp8-cast", "fp8-scaled-mm"] = "fp8-cast"
     offload: Literal["none", "cpu", "disk"] = "cpu"
     max_batch_size: int = Field(default=1, ge=1, le=4)
+
+    @field_validator("checkpoint_path", "gemma_root", "spatial_upsampler_path")
+    @classmethod
+    def model_path_must_not_be_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("模型路径不能为空")
+        return value
 
     def cache_key(self) -> tuple:
         return (
@@ -48,6 +64,14 @@ class ImageCondition(BaseModel):
     frame_idx: int = Field(default=0, ge=0)
     strength: float = Field(default=1.0, ge=0.0, le=1.0)
     crf: int = Field(default=33, ge=0, le=51)
+
+    @field_validator("path")
+    @classmethod
+    def path_must_not_be_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("图片路径不能为空")
+        return value
 
 
 class GuidanceConfig(BaseModel):
@@ -75,6 +99,14 @@ class GenerationConfig(BaseModel):
     output_path: str
     enhance_prompt: bool = False
     guidance: GuidanceConfig = Field(default_factory=GuidanceConfig)
+
+    @field_validator("audio_path", "output_path")
+    @classmethod
+    def generation_path_must_not_be_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("路径不能为空")
+        return value
 
     @model_validator(mode="after")
     def validate_ltx_constraints(self) -> GenerationConfig:
@@ -125,18 +157,25 @@ def validate_request(
     gen = request.generation
 
     if check_paths:
-        required = {
+        required_files = {
             "model.checkpoint_path": model.checkpoint_path,
-            "model.gemma_root": model.gemma_root,
             "model.distilled_lora.path": model.distilled_lora.path,
             "model.spatial_upsampler_path": model.spatial_upsampler_path,
             "generation.audio_path": gen.audio_path,
         }
-        required.update({f"model.loras.{i}.path": x.path for i, x in enumerate(model.loras)})
-        required.update({f"generation.images.{i}.path": x.path for i, x in enumerate(gen.images)})
-        for field, value in required.items():
-            if not Path(value).expanduser().exists():
-                issues.append(ValidationIssue(level="error", field=field, message=f"路径不存在：{value}"))
+        required_files.update({f"model.loras.{i}.path": x.path for i, x in enumerate(model.loras)})
+        required_files.update({f"generation.images.{i}.path": x.path for i, x in enumerate(gen.images)})
+        for field, value in required_files.items():
+            if not Path(value).expanduser().is_file():
+                issues.append(ValidationIssue(level="error", field=field, message=f"文件不存在：{value}"))
+        if not Path(model.gemma_root).expanduser().is_dir():
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    field="model.gemma_root",
+                    message=f"Gemma 目录不存在：{model.gemma_root}",
+                )
+            )
 
     output = Path(gen.output_path).expanduser()
     if output.suffix.lower() != ".mp4":
@@ -160,4 +199,3 @@ def validate_request(
         video_duration=round(gen.num_frames / gen.frame_rate, 3),
         issues=issues,
     )
-

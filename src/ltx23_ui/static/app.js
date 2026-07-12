@@ -13,7 +13,7 @@ async function api(url, options = {}) {
   } catch (error) {
     throw new Error(`无法连接服务端 ${location.origin}${url}。请确认页面通过 ltx23-ui 的 7860 端口打开，且服务进程仍在运行。`);
   }
-  if (!response.ok) { let data; try { data = await response.json(); } catch { data = {}; } throw new Error(data.detail || `请求失败 ${response.status}`); }
+  if (!response.ok) { let data; try { data = await response.json(); } catch { data = {}; } const detail=Array.isArray(data.detail)?data.detail.map(item=>`${(item.loc||[]).slice(1).join('.')}: ${item.msg}`).join('；'):data.detail;throw new Error(detail || `请求失败 ${response.status}`); }
   return response.json();
 }
 function modelData() {
