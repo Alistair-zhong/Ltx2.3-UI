@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import logging
 import queue
+import shlex
 import threading
 import traceback
 import uuid
@@ -14,12 +15,106 @@ from typing import Any, Literal
 from .models import GenerationRequest, validate_request
 
 logger = logging.getLogger(__name__)
+terminal_logger = logging.getLogger("uvicorn.error")
 
 JobState = Literal["queued", "loading", "generating", "encoding", "completed", "failed", "cancelled"]
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def build_cli_command(request: GenerationRequest) -> str:
+    """Render the programmatic request as an equivalent copyable CLI command."""
+    model = request.model
+    gen = request.generation
+    guide = gen.guidance
+    args = [
+        "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "ltx_pipelines.a2vid_two_stage",
+        "--checkpoint-path",
+        model.checkpoint_path,
+        "--gemma-root",
+        model.gemma_root,
+        "--distilled-lora",
+        model.distilled_lora.path,
+        str(model.distilled_lora.strength),
+        "--spatial-upsampler-path",
+        model.spatial_upsampler_path,
+    ]
+    for lora in model.loras:
+        args.extend(("--lora", lora.path, str(lora.strength)))
+    args.extend(
+        (
+            "--audio-path",
+            gen.audio_path,
+            "--audio-start-time",
+            str(gen.audio_start_time),
+            "--audio-max-duration",
+            str(gen.audio_max_duration or gen.num_frames / gen.frame_rate),
+        )
+    )
+    for image in gen.images:
+        args.extend(
+            (
+                "--image",
+                image.path,
+                str(image.frame_idx),
+                str(image.strength),
+                str(image.crf),
+            )
+        )
+    args.extend(
+        (
+            "--prompt",
+            gen.prompt,
+            "--negative-prompt",
+            gen.negative_prompt,
+            "--height",
+            str(gen.height),
+            "--width",
+            str(gen.width),
+            "--num-frames",
+            str(gen.num_frames),
+            "--frame-rate",
+            str(gen.frame_rate),
+            "--num-inference-steps",
+            str(gen.num_inference_steps),
+            "--seed",
+            str(gen.seed),
+            "--video-cfg-guidance-scale",
+            str(guide.cfg_scale),
+            "--video-stg-guidance-scale",
+            str(guide.stg_scale),
+            "--video-rescale-scale",
+            str(guide.rescale_scale),
+            "--a2v-guidance-scale",
+            str(guide.a2v_scale),
+            "--video-skip-step",
+            str(guide.skip_step),
+            "--video-stg-blocks",
+        )
+    )
+    args.extend(str(block) for block in guide.stg_blocks)
+    args.extend(
+        (
+            "--max-batch-size",
+            str(model.max_batch_size),
+            "--offload",
+            model.offload,
+            "--output-path",
+            gen.output_path,
+        )
+    )
+    if model.quantization != "none":
+        args.extend(("--quantization", model.quantization))
+    if gen.enhance_prompt:
+        args.append("--enhance-prompt")
+    return shlex.join(args)
 
 
 @dataclass
@@ -157,7 +252,22 @@ class PipelineRuntime:
 
     def _execute(self, job: Job) -> None:
         request = job.request
-        if self._active_key != request.model.cache_key() or self._pipeline is None:
+        reload_required = self._active_key != request.model.cache_key() or self._pipeline is None
+        terminal_logger.info("=" * 88)
+        terminal_logger.info(
+            "LTX A2V job %s starting (model=%s)",
+            job.id,
+            "reload" if reload_required else "reuse",
+        )
+        terminal_logger.info(
+            "Requested runtime: quantization=%s, offload=%s, max_batch_size=%d",
+            request.model.quantization,
+            request.model.offload,
+            request.model.max_batch_size,
+        )
+        terminal_logger.info("Equivalent CLI command:\n%s", build_cli_command(request))
+        terminal_logger.info("=" * 88)
+        if reload_required:
             self._set_state(job, "loading", 8, "正在加载模型与 LoRA")
             self._load_pipeline(request)
         else:

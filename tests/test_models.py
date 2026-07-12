@@ -1,3 +1,4 @@
+import shlex
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from ltx23_ui.models import (
     frames_for_duration,
     validate_request,
 )
+from ltx23_ui.runtime import build_cli_command
 
 
 def test_frames_snap_down_to_8k_plus_1() -> None:
@@ -83,3 +85,33 @@ def test_validation_and_reload_key(tmp_path: Path) -> None:
     assert reused.valid
     assert not reused.requires_reload
 
+
+def test_cli_command_contains_runtime_and_quoted_values() -> None:
+    request = GenerationRequest(
+        model=ModelConfig(
+            checkpoint_path="/models/main model.safetensors",
+            gemma_root="/models/gemma",
+            distilled_lora=LoraConfig(path="/models/distilled.safetensors", strength=0.5),
+            spatial_upsampler_path="/models/up.safetensors",
+            loras=[LoraConfig(path="/models/test lora.safetensors", strength=0.8)],
+            quantization="fp8-cast",
+            offload="cpu",
+        ),
+        generation=GenerationConfig(
+            prompt="a singer's close-up",
+            audio_path="/inputs/song.wav",
+            output_path="/outputs/result.mp4",
+            width=768,
+            height=1280,
+            num_frames=121,
+            frame_rate=25,
+            audio_max_duration=5,
+        ),
+    )
+    command = build_cli_command(request)
+    tokens = shlex.split(command)
+    assert "--quantization fp8-cast" in command
+    assert "--offload cpu" in command
+    assert "'/models/main model.safetensors'" in command
+    assert "--lora '/models/test lora.safetensors' 0.8" in command
+    assert tokens[tokens.index("--prompt") + 1] == "a singer's close-up"
