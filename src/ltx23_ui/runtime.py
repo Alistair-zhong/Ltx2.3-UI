@@ -7,6 +7,7 @@ import shlex
 import threading
 import traceback
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -287,11 +288,62 @@ class PipelineRuntime:
         else:
             self._set_state(job, "generating", 15, "复用已加载模型，开始生成")
 
-        self._set_state(job, "generating", 20, "Stage 1/2 扩散与上采样中")
-        video, audio = self._call_pipeline(request)
-        self._set_state(job, "encoding", 90, "正在编码 MP4")
-        self._encode(request, video, audio)
+        self._set_state(job, "generating", 12, "正在编码 Prompt、音频和图片条件")
+        with self._sampling_progress(job):
+            video, audio = self._call_pipeline(request)
+        self._set_state(job, "encoding", 92, "Stage 2 完成 · 准备 VAE 分块解码")
+        self._encode(job, request, video, audio)
         self._set_state(job, "completed", 100, "生成完成")
+
+    @contextmanager
+    def _sampling_progress(self, job: Job):
+        """Track real denoising steps without modifying the installed LTX package."""
+        from ltx_pipelines.utils import samplers
+
+        original_tqdm = samplers.tqdm
+        loop_number = 0
+
+        def tracked_tqdm(iterable, *args, **kwargs):
+            nonlocal loop_number
+            loop_number += 1
+            stage = loop_number
+            try:
+                total = len(iterable)
+            except TypeError:
+                total = None
+
+            def progress_iterator():
+                if stage == 1:
+                    self._set_state(job, "generating", 20, "Stage 1/2 低分辨率扩散 · 0 步")
+                elif stage == 2:
+                    self._set_state(job, "generating", 78, "Stage 2/2 高分辨率细化 · 0 步")
+                completed = 0
+                for item in original_tqdm(iterable, *args, **kwargs):
+                    yield item
+                    completed += 1
+                    if stage == 1:
+                        fraction = completed / total if total else 0
+                        progress = 20 + round(50 * fraction)
+                        message = f"Stage 1/2 低分辨率扩散 · {completed}/{total or '?'} 步"
+                    elif stage == 2:
+                        fraction = completed / total if total else 0
+                        progress = 78 + round(12 * fraction)
+                        message = f"Stage 2/2 高分辨率细化 · {completed}/{total or '?'} 步"
+                    else:
+                        continue
+                    self._set_state(job, "generating", progress, message)
+                if stage == 1:
+                    self._set_state(job, "generating", 72, "Stage 1 完成 · 空间放大与高分辨率条件编码")
+                elif stage == 2:
+                    self._set_state(job, "generating", 91, "Stage 2 完成 · 创建 VAE 解码器")
+
+            return progress_iterator()
+
+        samplers.tqdm = tracked_tqdm
+        try:
+            yield
+        finally:
+            samplers.tqdm = original_tqdm
 
     def _load_pipeline(self, request: GenerationRequest) -> None:
         try:
@@ -376,15 +428,31 @@ class PipelineRuntime:
             max_batch_size=request.model.max_batch_size,
         )
 
-    def _encode(self, request: GenerationRequest, video: Any, audio: Any) -> None:
+    def _encode(self, job: Job, request: GenerationRequest, video: Any, audio: Any) -> None:
         from ltx_core.model.video_vae import TilingConfig, get_video_chunks_number
         from ltx_pipelines.utils.media_io import encode_video
 
         gen = request.generation
+        video_chunks_number = get_video_chunks_number(gen.num_frames, TilingConfig.default())
+
+        def video_with_progress():
+            decoded = 0
+            for chunk in video:
+                decoded += 1
+                fraction = decoded / video_chunks_number if video_chunks_number else 0
+                progress = 92 + round(6 * min(fraction, 1.0))
+                self._set_state(
+                    job,
+                    "encoding",
+                    progress,
+                    f"VAE 分块解码与编码 · {decoded}/{video_chunks_number or '?'} 块",
+                )
+                yield chunk
+            self._set_state(job, "encoding", 99, "视频帧完成 · 正在封装音频与 MP4")
         encode_video(
-            video=video,
+            video=video_with_progress(),
             fps=gen.frame_rate,
             audio=audio,
             output_path=gen.output_path,
-            video_chunks_number=get_video_chunks_number(gen.num_frames, TilingConfig.default()),
+            video_chunks_number=video_chunks_number,
         )

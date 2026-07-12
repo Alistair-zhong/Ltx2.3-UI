@@ -1,4 +1,6 @@
 import shlex
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -12,7 +14,7 @@ from ltx23_ui.models import (
     frames_for_duration,
     validate_request,
 )
-from ltx23_ui.runtime import build_cli_command
+from ltx23_ui.runtime import Job, PipelineRuntime, build_cli_command
 
 
 def test_frames_snap_down_to_8k_plus_1() -> None:
@@ -126,3 +128,29 @@ def test_cli_command_contains_runtime_and_quoted_values() -> None:
     assert "'/models/main model.safetensors'" in command
     assert "--lora '/models/test lora.safetensors' 0.8" in command
     assert tokens[tokens.index("--prompt") + 1] == "a singer's close-up"
+
+
+def test_sampling_progress_tracks_both_real_loops(monkeypatch) -> None:
+    samplers = types.ModuleType("ltx_pipelines.utils.samplers")
+    def original_tqdm(iterable, *args, **kwargs):
+        return iterable
+
+    samplers.tqdm = original_tqdm
+    utils = types.ModuleType("ltx_pipelines.utils")
+    utils.samplers = samplers
+    package = types.ModuleType("ltx_pipelines")
+    package.utils = utils
+    monkeypatch.setitem(sys.modules, "ltx_pipelines", package)
+    monkeypatch.setitem(sys.modules, "ltx_pipelines.utils", utils)
+    monkeypatch.setitem(sys.modules, "ltx_pipelines.utils.samplers", samplers)
+
+    runtime = PipelineRuntime()
+    job = Job(id="progress-test", request=None)  # type: ignore[arg-type]
+    with runtime._sampling_progress(job):
+        assert list(samplers.tqdm(range(4))) == [0, 1, 2, 3]
+        assert job.progress == 72
+        assert "空间放大" in job.message
+        assert list(samplers.tqdm(range(3))) == [0, 1, 2]
+        assert job.progress == 91
+        assert "Stage 2" in job.message
+    assert samplers.tqdm is original_tqdm
