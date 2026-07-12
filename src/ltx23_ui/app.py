@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import __version__
 from .media import probe_duration
 from .models import (
     DEFAULT_NEGATIVE_PROMPT,
@@ -37,7 +38,16 @@ async def lifespan(_: FastAPI):
     runtime.stop()
 
 
-app = FastAPI(title="LTX-2.3 A2V UI", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="LTX-2.3 A2V UI", version=__version__, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def disable_ui_cache(request, call_next):
+    response = await call_next(request)
+    if request.url.path in {"/", "/index.html", "/app.js", "/style.css"}:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 class FrameRequest(BaseModel):
@@ -57,6 +67,7 @@ def health() -> dict:
     upload_ready = UPLOAD_DIR.is_dir() and os.access(UPLOAD_DIR, os.W_OK)
     return {
         "ok": True,
+        "version": __version__,
         "model_loaded": runtime.model_loaded,
         "queue_size": runtime.queue_size,
         "upload_ready": upload_ready,
