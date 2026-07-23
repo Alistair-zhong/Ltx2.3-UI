@@ -8,7 +8,7 @@ def test_health_and_frame_calculator() -> None:
         response = client.get("/api/health")
         assert response.status_code == 200
         assert response.json()["ok"] is True
-        assert response.json()["version"] == "0.1.5"
+        assert response.json()["version"] == "0.1.6"
 
         response = client.post("/api/frames", json={"duration": 16, "fps": 25})
         assert response.status_code == 200
@@ -20,6 +20,22 @@ def test_static_ui_is_served() -> None:
         response = client.get("/")
         assert response.status_code == 200
         assert "A2V LoRA Lab" in response.text
+
+
+def test_profile_endpoint(monkeypatch) -> None:
+    import ltx23_ui.app as app_module
+
+    profile = {
+        "job_id": "profile-test",
+        "status": "completed",
+        "total_seconds": 12.3,
+    }
+    job = type("ProfileJob", (), {"profile": profile})()
+    monkeypatch.setattr(app_module.runtime, "get_job", lambda _: job)
+    with TestClient(app) as client:
+        response = client.get("/api/jobs/profile-test/profile")
+    assert response.status_code == 200
+    assert response.json() == profile
 
 
 def test_upload_saves_file(tmp_path, monkeypatch) -> None:

@@ -36,6 +36,9 @@ class ModelConfig(BaseModel):
     loras: list[LoraConfig] = Field(default_factory=list)
     quantization: Literal["none", "fp8-cast", "fp8-scaled-mm"] = "fp8-cast"
     offload: Literal["none", "cpu", "disk"] = "cpu"
+    compile_mode: Literal["none", "default", "reduce-overhead", "max-autotune"] = (
+        "reduce-overhead"
+    )
     max_batch_size: int = Field(default=1, ge=1, le=4)
 
     @field_validator("checkpoint_path", "gemma_root", "spatial_upsampler_path")
@@ -56,6 +59,7 @@ class ModelConfig(BaseModel):
             tuple((item.path, item.strength) for item in self.loras),
             self.quantization,
             self.offload,
+            self.compile_mode,
         )
 
 
@@ -98,6 +102,7 @@ class GenerationConfig(BaseModel):
     seed: int = Field(default=10, ge=0, le=2**63 - 1)
     output_path: str
     enhance_prompt: bool = False
+    profile: bool = True
     guidance: GuidanceConfig = Field(default_factory=GuidanceConfig)
 
     @field_validator("audio_path", "output_path")
@@ -192,6 +197,28 @@ def validate_request(
         issues.append(ValidationIssue(level="warning", field="model.quantization", message="fp8-scaled-mm 需要 TensorRT-LLM 与 Hopper GPU"))
     if model.offload == "disk":
         issues.append(ValidationIssue(level="warning", field="model.offload", message="磁盘 offload 最省显存，但生成会明显变慢"))
+    if model.compile_mode != "none":
+        issues.append(
+            ValidationIssue(
+                level="info",
+                field="model.compile_mode",
+                message=(
+                    "torch.compile 首次生成含编译开销；"
+                    "请用相同模型配置的第二次任务评估热运行速度"
+                ),
+            )
+        )
+    if model.offload == "cpu" and model.max_batch_size == 1:
+        issues.append(
+            ValidationIssue(
+                level="info",
+                field="model.max_batch_size",
+                message=(
+                    "CPU offload 下可在显存允许时测试最大批次 4，"
+                    "以减少逐层 PCIe 搬运"
+                ),
+            )
+        )
 
     return ValidationResult(
         valid=not any(issue.level == "error" for issue in issues),

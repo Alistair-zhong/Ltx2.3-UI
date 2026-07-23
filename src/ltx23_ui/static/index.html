@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LTX 2.3 · A2V Lab</title>
-  <link rel="stylesheet" href="/style.css?v=0.1.5">
+  <link rel="stylesheet" href="/style.css?v=0.1.6">
 </head>
 <body>
   <header class="topbar">
@@ -88,6 +88,7 @@
                 </div>
                 <label class="field"><span>负向提示词</span><textarea id="negativePrompt" rows="4"></textarea></label>
                 <label class="check"><input id="enhancePrompt" type="checkbox">使用 Gemma 增强提示词</label>
+                <label class="check"><input id="profile" type="checkbox" checked>记录 CUDA 同步性能报告</label>
               </div>
             </details>
 
@@ -105,9 +106,10 @@
               <div class="sub-head"><div><b>测试 LoRA</b><small>路径或强度改变都会使模型配置失效</small></div><button type="button" class="text-button" id="addLora">＋ 添加 LoRA</button></div>
               <div id="loraList"></div>
             </div>
-            <div class="grid three">
+            <div class="grid two">
               <label class="field"><span>量化</span><select id="quantization"><option value="fp8-cast">FP8 Cast</option><option value="none">不量化</option><option value="fp8-scaled-mm">FP8 Scaled MM</option></select></label>
               <label class="field"><span>Offload</span><select id="offload"><option value="cpu">CPU</option><option value="none">关闭</option><option value="disk">磁盘</option></select></label>
+              <label class="field"><span>torch.compile</span><select id="compileMode"><option value="reduce-overhead">Reduce Overhead</option><option value="default">PyTorch 默认</option><option value="max-autotune">Max Autotune</option><option value="none">关闭</option></select></label>
               <div class="info-tile"><span>当前配置</span><b id="reloadBadge">待加载</b></div>
             </div>
           </div>
@@ -130,6 +132,7 @@
         </div>
         <div id="issues" class="issues"></div>
         <div id="progressBox" class="progress-box hidden"><div><span id="progressMessage">等待执行</span><b id="progressValue">0%</b></div><div class="progress-track"><i id="progressBar"></i></div></div>
+        <div id="profileBox" class="profile-box hidden"></div>
         <button type="submit" form="generationForm" class="run-button" id="runButton"><span>✦</span><b>加入生成队列</b><small id="runHint">将加载新模型配置</small></button>
         <button type="button" class="validate-button" id="validateButton">仅检查参数</button>
         <p class="run-note">任务按顺序执行，页面关闭不会中断服务端生成。</p>
@@ -138,6 +141,6 @@
   </main>
   <input type="file" id="hiddenUpload" hidden>
   <div id="toast" role="status"></div>
-  <script src="/app.js?v=0.1.5"></script>
+  <script src="/app.js?v=0.1.6"></script>
 </body>
 </html>

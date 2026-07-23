@@ -136,6 +136,16 @@ def get_job(job_id: str) -> dict:
     return job.public()
 
 
+@app.get("/api/jobs/{job_id}/profile")
+def get_job_profile(job_id: str) -> dict:
+    job = runtime.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job.profile is None:
+        raise HTTPException(status_code=409, detail="任务尚未生成 profiling 报告，或未开启性能分析")
+    return job.profile
+
+
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict:
     if not runtime.cancel(job_id):

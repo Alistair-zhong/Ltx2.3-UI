@@ -8,7 +8,8 @@
 - 单 GPU 安全任务队列，关闭浏览器不影响正在执行的任务
 - 读取音频实际时长，自动计算不超过音频长度的 `8k+1` 帧数
 - 自动检查两阶段分辨率（64 的倍数）、帧数、关键帧位置、文件路径和输出格式
-- 支持多个测试 LoRA、Distilled LoRA、FP8、CPU/磁盘 offload 与完整 A2V guidance 参数
+- 支持多个测试 LoRA、Distilled LoRA、FP8、CPU/磁盘 offload、`torch.compile` 与完整 A2V guidance 参数
+- CUDA 同步分阶段 profiling：扩散、条件编码、上采样、VAE 解码和 MP4 封装分别计时
 - 浏览器上传音频/图片、配置预设、历史任务、生成进度、视频预览/下载
 
 ## 安装
@@ -69,11 +70,41 @@ LTX_UI_MAX_UPLOAD_MB=4096 uv run ltx23-ui
 - checkpoint、Gemma、空间上采样模型
 - Distilled LoRA 的路径和强度
 - 测试 LoRA 列表、路径和强度
-- 量化与 offload 模式
+- 量化、offload 与 `torch.compile` 模式
 
 prompt、负向 prompt、音频、图片、输出路径、时长、帧率、分辨率、seed、采样步数和 guidance 参数都不会触发模型重载。
 
 > LTX 官方实现会在 Pipeline 初始化时把 LoRA 交给 DiffusionStage，因此调整 LoRA 强度仍需重建 Pipeline。UI 会在提交前明确显示“将加载新模型配置”或“将复用已加载模型”。
+
+## torch.compile 与性能分析
+
+官方 `a2vid_two_stage` 在不传参数时不会自动启用 `torch.compile`。直接使用 CLI
+需要显式添加：
+
+```bash
+uv run python -m ltx_pipelines.a2vid_two_stage \
+  --compile mode=reduce-overhead \
+  ...
+```
+
+本 UI 默认选择 `Reduce Overhead`，并把
+`CompilationConfig(mode="reduce-overhead")` 传给两个 DiffusionStage。可在“模型”页切换或关闭；
+改变编译模式会触发 Pipeline 重载。
+
+高级生成参数里的“记录 CUDA 同步性能报告”默认开启。每个任务结束后，报告会：
+
+- 在服务终端按耗时从高到低输出各阶段、百分比、每步平均/P95/最大耗时及采样循环外开销
+- 记录 CUDA 峰值 allocated/reserved 显存
+- 出现在任务卡片和右侧生成面板
+- 通过 `GET /api/jobs/<job_id>/profile` 返回完整 JSON
+
+`torch.compile` 的第一次生成包含图捕获和编译成本。定位稳态瓶颈时，应保持模型配置、
+分辨率、帧数和最大批次不变，连续生成至少两次，并以第二次的“模型复用热运行”报告为准。
+性能分析会在阶段边界执行 CUDA 同步；完成定位后可以取消勾选，以测量无 profiling 干扰的最终速度。
+
+CPU offload 下，官方实现的 guidance 最多可把 4 个 pass 合并为一个 batch。
+如果显存足够，可把“最大批次”从 1 逐步提高到 4，减少逐层 PCIe 权重搬运；若出现 OOM，
+退回 2 或 1。磁盘 offload 通常最慢，只建议在 CPU 内存也不足时使用。
 
 ## 帧数说明
 
